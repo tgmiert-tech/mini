@@ -98,11 +98,6 @@
             transition: transform 0.2s, box-shadow 0.2s;
         }
 
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0,0,0,0.2);
-        }
-
         .card-title {
             font-size: 18px;
             font-weight: bold;
@@ -322,28 +317,6 @@
             background: rgba(233, 69, 96, 0.2);
         }
 
-        /* Floating Action Button */
-        .fab {
-            position: fixed;
-            bottom: 20px;
-            right: 20px;
-            width: 56px;
-            height: 56px;
-            border-radius: 28px;
-            background: var(--gradient);
-            border: none;
-            color: white;
-            font-size: 24px;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            transition: all 0.2s;
-            display: none;
-        }
-
-        .fab:active {
-            transform: scale(0.9);
-        }
-
         /* Loading */
         .loading {
             text-align: center;
@@ -394,6 +367,27 @@
             background: var(--bg-card);
             border-radius: 3px;
         }
+
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            z-index: 1000;
+            animation: fadeInOut 2s ease;
+        }
+
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) translateY(20px); }
+            15% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            85% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            100% { opacity: 0; transform: translateX(-50%) translateY(-20px); }
+        }
     </style>
 </head>
 <body>
@@ -403,20 +397,20 @@
     </div>
 
     <div class="tabs">
-        <div class="tab" onclick="showTab('status')">
-            <i>📊</i>
+        <div class="tab active" onclick="showTab('status')">
+            <span>📊</span>
             <span>Статус</span>
         </div>
         <div class="tab" onclick="showTab('phrases')">
-            <i>💬</i>
+            <span>💬</span>
             <span>Фразы</span>
         </div>
         <div class="tab" onclick="showTab('ai')">
-            <i>🧠</i>
+            <span>🧠</span>
             <span>ИИ</span>
         </div>
         <div class="tab" onclick="showTab('settings')">
-            <i>⚙️</i>
+            <span>⚙️</span>
             <span>Настройки</span>
         </div>
     </div>
@@ -612,17 +606,24 @@
         </div>
     </div>
 
-    <button class="fab" id="fab" onclick="scrollToTop()">↑</button>
-
     <script>
         const tg = window.Telegram.WebApp;
         tg.ready();
         tg.expand();
-        tg.MainButton.setText('🔄 Обновить');
-        tg.MainButton.show();
-
+        
         let userData = {};
         let isLoading = false;
+        let pendingRequests = {};
+
+        // Показать уведомление
+        function showToast(message, isError = false) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.style.background = isError ? 'rgba(233, 69, 96, 0.9)' : 'rgba(0, 184, 148, 0.9)';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 2000);
+        }
 
         // Показать вкладку
         function showTab(tabName) {
@@ -630,17 +631,36 @@
             document.getElementById(`tab-${tabName}`).style.display = 'block';
             document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
             event.target.closest('.tab').classList.add('active');
-            
-            if (tabName === 'phrases' && userData.msgs) {
-                renderPhrases();
-            }
+        }
+
+        // Отправка команды боту
+        async function sendToBot(action, data = {}) {
+            return new Promise((resolve, reject) => {
+                const requestId = Date.now() + Math.random();
+                pendingRequests[requestId] = { resolve, reject, timeout: setTimeout(() => {
+                    delete pendingRequests[requestId];
+                    reject(new Error('Timeout'));
+                }, 10000) };
+                
+                tg.sendData(JSON.stringify({ action, ...data, requestId }));
+            });
         }
 
         // Загрузка данных
-        function loadData() {
+        async function loadData() {
             if (isLoading) return;
             isLoading = true;
-            tg.sendData(JSON.stringify({ action: 'get_data' }));
+            
+            try {
+                const response = await sendToBot('get_data');
+                updateUI(response);
+                showToast('✅ Данные обновлены');
+            } catch (error) {
+                console.error('Ошибка загрузки:', error);
+                showToast('❌ Ошибка загрузки данных', true);
+            } finally {
+                isLoading = false;
+            }
         }
 
         // Обновление интерфейса
@@ -649,8 +669,9 @@
             
             // Статус
             const isActive = data.active || false;
-            document.getElementById('status-text').innerHTML = isActive ? '✅ Активен' : '❌ Выключен';
-            document.getElementById('status-text').style.color = isActive ? 'var(--accent-success)' : 'var(--accent-danger)';
+            const statusEl = document.getElementById('status-text');
+            statusEl.innerHTML = isActive ? '✅ Активен' : '❌ Выключен';
+            statusEl.style.color = isActive ? 'var(--accent-success)' : 'var(--accent-danger)';
             
             const toggleBtn = document.getElementById('toggle-btn');
             toggleBtn.innerHTML = isActive ? '🛑 Остановить' : '🚀 Запустить';
@@ -658,8 +679,9 @@
             
             // ИИ статус
             const aiEnabled = data.ai_enabled || false;
-            document.getElementById('ai-status-text').innerHTML = aiEnabled ? '✅ Включен' : '❌ Выключен';
-            document.getElementById('ai-status-text').style.color = aiEnabled ? 'var(--accent-success)' : 'var(--accent-danger)';
+            const aiStatusEl = document.getElementById('ai-status-text');
+            aiStatusEl.innerHTML = aiEnabled ? '✅ Включен' : '❌ Выключен';
+            aiStatusEl.style.color = aiEnabled ? 'var(--accent-success)' : 'var(--accent-danger)';
             document.getElementById('ai-switch').checked = aiEnabled;
             
             // Фразы
@@ -687,18 +709,19 @@
                 document.getElementById('custom-prompt').value = data.ai_custom_prompt;
             }
             
+            // Показываем/скрываем поле кастомного промпта
+            const customContainer = document.getElementById('custom-prompt-container');
+            customContainer.style.display = data.ai_personality === 'custom' ? 'block' : 'none';
+            
             // Статистика
             renderStats(data);
             
             // Фразы
             renderPhrases();
-            
-            isLoading = false;
         }
 
         function renderStats(data) {
-            const today = new Date().toISOString().split('T')[0];
-            const todayCount = (data.stats || {}).today_messages || 0;
+            const todayCount = data.today_messages || 0;
             document.getElementById('today-messages').textContent = todayCount;
             
             const statsHtml = `
@@ -735,7 +758,7 @@
             
             let html = '';
             phrases.forEach((msg, i) => {
-                const text = msg.text || msg.photo ? '🖼️ [Фото]' : '❓';
+                const text = msg.text || (msg.photo ? '🖼️ [Фото]' : '❓');
                 html += `
                     <div class="phrase-item">
                         <div class="phrase-text">
@@ -757,144 +780,155 @@
         }
 
         // Действия
-        function toggleReply() {
+        async function toggleReply() {
             const isActive = userData.active || false;
             const action = isActive ? 'stop_reply' : 'start_reply';
-            tg.sendData(JSON.stringify({ action: action }));
+            try {
+                await sendToBot(action);
+                showToast(isActive ? '🛑 Автоответчик остановлен' : '🚀 Автоответчик запущен');
+                loadData();
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function toggleAI() {
+        async function toggleAI() {
             const enabled = document.getElementById('ai-switch').checked;
-            tg.sendData(JSON.stringify({ action: 'toggle_ai', enabled: enabled }));
+            try {
+                await sendToBot('toggle_ai', { enabled: enabled });
+                showToast(enabled ? '🤖 ИИ включен' : '🔘 ИИ выключен');
+                loadData();
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+                document.getElementById('ai-switch').checked = !enabled;
+            }
         }
 
-        function setPersonality() {
+        async function setPersonality() {
             const value = document.getElementById('personality-select').value;
-            const customContainer = document.getElementById('custom-prompt-container');
-            customContainer.style.display = value === 'custom' ? 'block' : 'none';
-            tg.sendData(JSON.stringify({ action: 'set_personality', value: value }));
+            try {
+                await sendToBot('set_personality', { value: value });
+                showToast('✅ Личность изменена');
+                loadData();
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function saveCustomPrompt() {
+        async function saveCustomPrompt() {
             const prompt = document.getElementById('custom-prompt').value;
-            tg.sendData(JSON.stringify({ action: 'set_custom_prompt', prompt: prompt }));
+            try {
+                await sendToBot('set_custom_prompt', { prompt: prompt });
+                showToast('✅ Промпт сохранен');
+                loadData();
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function setMode() {
+        async function setMode() {
             const value = document.getElementById('mode-select').value;
-            tg.sendData(JSON.stringify({ action: 'set_mode', value: value }));
+            try {
+                await sendToBot('set_mode', { value: value });
+                showToast('✅ Режим изменен');
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function setInterval() {
+        async function setInterval() {
             const value = parseInt(document.getElementById('interval-select').value);
-            tg.sendData(JSON.stringify({ action: 'set_interval', value: value }));
+            try {
+                await sendToBot('set_interval', { value: value });
+                showToast('✅ Интервал изменен');
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function setWho() {
+        async function setWho() {
             const value = document.getElementById('who-select').value;
-            tg.sendData(JSON.stringify({ action: 'set_who', value: value }));
+            try {
+                await sendToBot('set_who', { value: value });
+                showToast('✅ Режим изменен');
+            } catch (error) {
+                showToast('❌ Ошибка', true);
+            }
         }
 
-        function addPhrase() {
+        async function addPhrase() {
             const input = document.getElementById('phrase-input');
             const text = input.value.trim();
-            if (text) {
-                tg.sendData(JSON.stringify({ action: 'add_phrase', text: text }));
-                input.value = '';
-                tg.showPopup({
-                    title: '✅ Успешно',
-                    message: 'Фраза добавлена!',
-                    buttons: [{ type: 'ok' }]
-                });
-            } else {
-                tg.showPopup({
-                    title: '⚠️ Ошибка',
-                    message: 'Введите текст фразы',
-                    buttons: [{ type: 'ok' }]
-                });
-            }
-        }
-
-        function deletePhrase(index) {
-            tg.showPopup({
-                title: '🗑️ Удаление',
-                message: 'Удалить эту фразу?',
-                buttons: [
-                    { id: 'cancel', type: 'cancel' },
-                    { id: 'ok', type: 'ok' }
-                ]
-            }, (buttonId) => {
-                if (buttonId === 'ok') {
-                    tg.sendData(JSON.stringify({ action: 'delete_phrase', index: index }));
-                }
-            });
-        }
-
-        function refreshData() {
-            loadData();
-            tg.showPopup({
-                title: '🔄 Обновление',
-                message: 'Данные обновлены',
-                buttons: [{ type: 'ok' }]
-            });
-        }
-
-        function clearStats() {
-            tg.showPopup({
-                title: '⚠️ Очистка статистики',
-                message: 'Сбросить всю статистику?',
-                buttons: [
-                    { id: 'cancel', type: 'cancel' },
-                    { id: 'ok', type: 'ok' }
-                ]
-            }, (buttonId) => {
-                if (buttonId === 'ok') {
-                    tg.sendData(JSON.stringify({ action: 'clear_stats' }));
-                }
-            });
-        }
-
-        function scrollToTop() {
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        // Показываем FAB при скролле
-        window.addEventListener('scroll', () => {
-            const fab = document.getElementById('fab');
-            if (window.scrollY > 300) {
-                fab.style.display = 'block';
-            } else {
-                fab.style.display = 'none';
-            }
-        });
-
-        // Кнопка MainButton
-        tg.onEvent('mainButtonClicked', () => {
-            refreshData();
-        });
-
-        // Получение данных от бота
-        window.handleTelegramData = function(data) {
-            if (data.error) {
-                tg.showPopup({
-                    title: '❌ Ошибка',
-                    message: data.error,
-                    buttons: [{ type: 'ok' }]
-                });
+            if (!text) {
+                showToast('⚠️ Введите текст фразы', true);
                 return;
             }
-            updateUI(data);
+            
+            try {
+                await sendToBot('add_phrase', { text: text });
+                showToast('✅ Фраза добавлена!');
+                input.value = '';
+                loadData();
+            } catch (error) {
+                showToast('❌ Ошибка добавления', true);
+            }
+        }
+
+        async function deletePhrase(index) {
+            if (confirm('Удалить эту фразу?')) {
+                try {
+                    await sendToBot('delete_phrase', { index: index });
+                    showToast('✅ Фраза удалена');
+                    loadData();
+                } catch (error) {
+                    showToast('❌ Ошибка удаления', true);
+                }
+            }
+        }
+
+        async function refreshData() {
+            loadData();
+        }
+
+        async function clearStats() {
+            if (confirm('Сбросить всю статистику? Это действие необратимо!')) {
+                try {
+                    await sendToBot('clear_stats');
+                    showToast('✅ Статистика сброшена');
+                    loadData();
+                } catch (error) {
+                    showToast('❌ Ошибка', true);
+                }
+            }
+        }
+
+        // Обработка ответов от бота
+        window.handleTelegramData = function(data) {
+            if (data.requestId && pendingRequests[data.requestId]) {
+                clearTimeout(pendingRequests[data.requestId].timeout);
+                if (data.error) {
+                    pendingRequests[data.requestId].reject(new Error(data.error));
+                } else {
+                    pendingRequests[data.requestId].resolve(data);
+                }
+                delete pendingRequests[data.requestId];
+            }
         };
 
-        // Загружаем данные при старте
-        loadData();
+        // Получение данных от бота через событие
+        tg.onEvent('mainButtonClicked', () => {
+            loadData();
+        });
 
-        // Автообновление каждые 10 секунд
+        // Загружаем данные при старте
+        setTimeout(() => loadData(), 500);
+        
+        // Автообновление каждые 15 секунд
         setInterval(() => {
             if (!isLoading) {
                 loadData();
             }
-        }, 10000);
+        }, 15000);
     </script>
 </body>
 </html>
